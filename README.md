@@ -11,6 +11,6 @@ Please start with the notebook **_Analysis_of_Transmission_Electron_Microscope_D
  
 For usage at your computer you'll have to download the whole repostory onto your computer and start the jupyter notebook server.
 
-Hve fun,
+Have fun,
 
 Gerd
