@@ -11,7 +11,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from matplotlib.widgets import SpanSelector
-from ipywidgets import widgets
+import ipywidgets as widgets
+
+
 import h5py
 
 from scipy.optimize import leastsq  ## leastsqure fitting routine fo scipy
@@ -170,10 +172,16 @@ class interactive_spectrum_image(object):
         y = self.y 
         if selection==None:
             selection = self.analysis
-        for self.x in range(self.cube.shape[0]):
+        for self.x in range(self.cube.shape[1]):
             if verbose:
-                print(f' row: {self.x}')
-            for self.y in range(self.cube.shape[1]):
+                #print(f' row: {self.x}')
+                if done < int(self.x/self.cube.shape[1]*50):
+                    done = int(self.x/nimages*50)
+                    sys.stdout.write('\r')
+                    # progress output :
+                    sys.stdout.write("[%-50s] %d%%" % ('='*done, 2*done))
+                    sys.stdout.flush()
+            for self.y in range(self.cube.shape[0]):
                 
                 if 'fit_zero_loss' in selection:
                     title = self.fit_zero_loss(plot_this = False)
@@ -210,16 +218,16 @@ class interactive_spectrum_image(object):
             self.rect.set_xy([x,y]) 
             self.update()
             
-                
+    def get_spectrum(self):
+        self.intensity_scale = self.tags['spectra'][f'{self.x}-{self.y}']['intensity_scale']
+        self.energy_scale = self.tags['spectra'][f'{self.x}-{self.y}']['energy_scale']
+        return   self.tags['spectra'][f'{self.x}-{self.y}']['spectrum']* self.intensity_scale
     def update(self):
         xlim = self.ax2.get_xlim()
         ylim = self.ax2.get_ylim()
         self.ax2.clear()
-        self.intensity_scale = self.tags['spectra'][f'{self.x}-{self.y}']['intensity_scale']
-        self.spectrum = self.tags['spectra'][f'{self.x}-{self.y}']['spectrum']* self.intensity_scale
-        self.energy_scale = self.tags['spectra'][f'{self.x}-{self.y}']['energy_scale']
         
-        
+        self.spectrum = self.get_spectrum()
         
         if 'fit_zero_loss' in self.analysis:
             title = self.fit_zero_loss()
@@ -395,7 +403,7 @@ class interactive_spectrum_image(object):
         self.scaleX = SI_channel['spatial_scale_x'][()]
         self.scaleY = SI_channel['spatial_scale_y'][()]
         
-        self.ax1.imshow(SI_tags['data'], extent = SI_tags['extent'], cmap = 'gray')
+        self.ax1.imshow(SI_tags['data'].T, extent = SI_tags['extent'], cmap = 'gray')
         if self.horizontal:
             self.ax1.set_xlabel('distance [nm]')
         else:
@@ -459,7 +467,10 @@ def get_Xsections(Z=0):
         return Xsections
     else:
         Z = int(Z)
-        return Xsections[str(Z)]
+        if Z in Xsections:
+            return Xsections[str(Z)]
+        else:
+            return 0
 
 def get_Z(Z):
     """
@@ -470,7 +481,7 @@ def get_Z(Z):
     """
     Xsections = get_Xsections()
     
-    ZZ_out = 0
+    Z_out = 0
     if str(Z).isdigit(): 
         Z_out = Z
     elif isinstance(Z, str):
@@ -703,7 +714,8 @@ class Region_Selector(object):
 class EdgesatCursor(object):
     """ 
         Adds a Cursor to a plot, which plots all major (possible) ionization edges at
-        the cursor location if left (right) mosue button is clicked.
+        the cursor location if left (right) mous
+        e button is clicked.
         
         The necessary initializtion parameter are:
         ax: matplotlib axis
@@ -1188,11 +1200,12 @@ def EELSdictionary(zero_loss_fit_width = 0, verbose = False):
 
     return spectrum_tags
 def fixE( spec, energy):
-        
-    start = np.searchsorted(energy,-2)
-    end   = np.searchsorted(energy, 2)
+    ### determine start and end fitting region in pixels
+    start = np.searchsorted(energy,-10)
+    end   = np.searchsorted(energy, 10)
     startx = np.argmax(spec[start:end])+start
-
+    
+    
     end = startx+3
     start = startx-3
     for i in range(10):
@@ -1206,7 +1219,7 @@ def fixE( spec, energy):
     
     x = np.array(energy[start:end])
     y = np.array(spec[start:end]).copy()
-    
+    print(energy[start])
     y[np.nonzero(y<=0)] = 1e-12
 
     def gauss(x, p): # p[0]==mean, p[1]= area p[2]==fwhm, 
@@ -1812,3 +1825,258 @@ def xsecXRPA(energy_scale, E0, Z, beta, shift=0 ):
     xsec = lin(energy_scale-shift)
     
     return xsec
+
+
+class periodic_table():# standard periodic table elements (q symbolizes an empty space)
+    """
+    Provides an interactive plot of the periodic table of elements in jupyter notebooks
+    to select a list of elements (here for EELS analysis).
+    The mouse click position is used to determine the element.
+    A selected element is shown as greenish. A second mouse click will deselect an element
+    
+    output:
+        USE get_edge_list() function to retrieve the selection of ioizaton edges (element and symmetry) at any point.
+    usage:
+        -
+        |pt = periodic_table()
+        -
+        
+        -
+        | selected_elements = pt.elements_selected
+        -
+        
+        
+        -
+          edge_list = pt.get_edge_list()
+        | 
+        -
+    """
+    def __init__(self, energy_scale=[], elements_selected=[]):
+        
+        if elements_selected == []:
+            self.elements_selected = []
+        else:
+            self.elements_selected = elements_selected
+        if energy_scale == []:
+            self.energy_scale = np.linspace(100,1000,901)
+        else:
+            self.energy_scale = energy_scale
+
+        # standard periodic table elements into a list
+        self.list_pt1 = ['H ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'He', 
+                    'Li', 'Be', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'B', 'C', 'N', 'O', 'F', 'Ne', 
+                    'Na', 'Mg', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar', 
+                    'K', 'Ca', 'Sc', 'Ti', 'V ', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn', 'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr', 
+                    'Rb', 'Sr', 'Y', 'Zr', 'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd', 'In', 'Sn', 'Sb', 'Te', 'I', 'Xe', 
+                    'Cs', 'Ba', '*', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg', 'Ti', 'Pb', 'Bi', 'Po', 'At', 'Rn', 
+                    'Fr', 'Ra', '**', 'Rf', 'Db', 'Sg', 'Bh', 'Hs', 'Mt', 'Ds', 'Rg', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
+
+        # Lanthanides and Actinides into a list
+        self.list_pt2 = [' ', '*', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb', 'Lu', 
+                    ' ', '**', 'Ac', 'Th', 'Pa', 'U', 'Np', 'Pu', 'Am', 'Cm', 'Bk', 'Cf', 'Es', 'Fm', 'Md', 'No', 'Lr']
+        self.rect = []
+        self.fig = plt.figure(figsize=(10,5), frameon=False)
+        for j in range(7):
+            for i in range(18):
+                if self.list_pt1[i+18*j] != ' ':
+                    if '*' in self.list_pt1[i+18*j]:
+                        plt.text(i,j+1, s=f'{self.list_pt1[i+18*j]:3}', backgroundcolor = 'coral')
+                    else:
+                        plt.text(i,j+1, s=f'{self.list_pt1[i+18*j]:2}')#, backgroundcolor = 'lightskyblue')
+                        self.rect.append(patches.Rectangle((i-0.3,j+.4), 1,1,  edgecolor='black',alpha=0.7, facecolor='lightskyblue'))
+                        plt.gca().add_patch(self.rect[-1])
+
+        for j in range(2):
+            for i in range(17):
+                if self.list_pt2[i+17*j] != ' ':
+                    if '*' in self.list_pt2[i+17*j]:
+                        plt.text(i+1,j+9, s=f'{self.list_pt2[i+17*j]:2}', backgroundcolor = 'coral')
+                    else:
+                        plt.text(i+1,j+9, s=f'{self.list_pt2[i+17*j]:2}')#, backgroundcolor = 'coral')
+                        self.rect.append(patches.Rectangle((i+.7,j+8.4), 1,1,  edgecolor='black',alpha=0.7, facecolor='coral'))
+                        plt.gca().add_patch(self.rect[-1])
+        plt.xlim(-1,18)
+        plt.ylim(11,0)
+        plt.gca().axis('off')
+        plt.gca().set_aspect('equal')
+
+        self.cid = self.fig.canvas.mpl_connect('button_press_event', self.onclick)
+        
+        if len(elements_selected)>0:
+            self.set_elements()
+       
+            
+    def set_elements(self):
+        for element in self.elements_selected:
+            try:
+                Z = get_Z(element)
+            except:
+                Z = 90
+            if Z > 85:
+                return
+            elif Z > 72: 
+                pos = Z-16
+            elif Z > 56: 
+                pos = 24+Z
+            else:
+                pos = Z-1
+            self.rect[pos].set_facecolor('lawngreen')    
+            
+            
+                
+    def onclick(self,event):
+        self.event = event
+        
+        select = ' '
+        if event.ydata <7:
+            select = self.list_pt1[int(event.xdata)+ 18*int(event.ydata)]
+            color= 'lightskyblue'
+        elif int(event.ydata+0.5)>8 and int(event.ydata+0.5)< 10:
+            select = self.list_pt2[int(event.xdata-1)+ 17*int(event.ydata-8)]
+            color = 'coral'
+            
+        try:
+            Z = get_Z(select)
+        except:
+            Z = 90
+        if Z > 85:
+            pass
+        elif Z > 72: 
+            pos = Z-16
+        elif Z > 56: 
+            pos = 24+Z
+        else:
+            pos = Z-1
+        if select in self.elements_selected:
+            self.rect[pos].set_facecolor(color) 
+            self.elements_selected.remove(select)
+        else:
+            self.rect[pos].set_facecolor('lawngreen')    
+            self.elements_selected.append(select)
+            
+    def set_likely_edges(self):
+        Xsections = get_Xsections()
+        energy_origin = self.energy_scale[0]
+        energy_window = self.energy_scale[-1] - energy_origin
+        selected_edges_unsorted = {}
+        selected_elements = []
+        for element in range(1,83):
+            #print(element)
+            element_Z =str(get_Z(element))
+
+            for key in Xsections[element_Z]:
+                if key in all_edges:
+                    onset = Xsections[element_Z][key]['onset'] 
+                    if onset> energy_origin:
+                        if onset - energy_origin < energy_window:
+                            if element not in selected_edges_unsorted:
+                                selected_edges_unsorted[element] = {}
+                            #print(element, Xsections[element]['name'], key, Xsections[element][key]['onset'])
+                            text = f"\n {Xsections[element_Z]['name']:2s}-{key}: {Xsections[element_Z][key]['onset']:8.1f} eV "
+                            #print(text)
+
+                            selected_edges_unsorted[element][key] = {}
+                            selected_edges_unsorted[element][key]['onset'] = Xsections[element_Z][key]['onset']
+                            if key in major_edges:
+                                selected_edges_unsorted[element][key]['intensity'] = 'major'
+                                selected_elements.append(Xsections[element_Z]['name'])
+                            else:
+                                selected_edges_unsorted[element][key]['intensity'] = 'minor'
+
+        for element in range(1,83):
+            if element > 72: 
+                pos = element-16
+            elif element > 56: 
+                pos = 24+element
+            else:
+                pos = element-1
+
+            if element in selected_edges_unsorted:
+
+                major = False
+                for key in selected_edges_unsorted[element]:
+
+                    if selected_edges_unsorted[element][key]['intensity'] == 'major':
+                        major = True
+                        symmetry = key
+                if major:
+
+                    self.rect[pos].set_alpha(1)
+
+                else:
+                    self.rect[pos].set_alpha(.3)
+            else:
+                self.rect[pos].set_alpha(.1)
+
+    def get_edge_list(self):
+        Xsections = get_Xsections()
+        energy_origin = self.energy_scale[0]
+        energy_window = self.energy_scale[-1] - energy_origin
+        selected_edges_unsorted = {}
+        for element in self.elements_selected:
+            #print(element)
+            element_Z =str(get_Z(element))
+
+            for key in Xsections[element_Z]:
+                if key in all_edges:
+                    onset = Xsections[element_Z][key]['onset'] 
+                    if onset> energy_origin:
+                        if onset - energy_origin < energy_window:
+                            if element not in selected_edges_unsorted:
+                                selected_edges_unsorted[element] = {}
+                            #print(element, Xsections[element]['name'], key, Xsections[element][key]['onset'])
+                            text = f"\n {Xsections[element_Z]['name']:2s}-{key}: {Xsections[element_Z][key]['onset']:8.1f} eV "
+                            #print(text)
+
+                            selected_edges_unsorted[element][key] = {}
+                            selected_edges_unsorted[element][key]['onset'] = Xsections[element_Z][key]['onset']
+                            if key in major_edges:
+                                selected_edges_unsorted[element][key]['intensity'] = 'major'
+                            else:
+                                selected_edges_unsorted[element][key]['intensity'] = 'minor'
+
+        self.edges_dict = {}
+        
+        element_list = []
+        symmetry_list = []
+        onset_list = []
+        for element in selected_edges_unsorted:
+            major = False
+            for key in selected_edges_unsorted[element]:
+
+                if selected_edges_unsorted[element][key]['intensity'] == 'major':
+                    major = True
+                    symmetry = key
+            if major:
+                #print(element, symmetry)
+                element_list.append(element)
+                symmetry_list.append(symmetry)
+                onset_list.append(selected_edges_unsorted[element][symmetry]['onset'])
+            else:
+                onset = energy_origin+energy_window
+                for key in selected_edges_unsorted[element]:
+                    if selected_edges_unsorted[element][key]['onset']< onset:
+                        onset = selected_edges_unsorted[element][key]['onset']
+                        symmetry = key
+                element_list.append(element)
+                symmetry_list.append(symmetry)
+                onset_list.append(onset)
+
+        #print(np.argsort(onset_list))
+        self.edges_dictionary = {}
+        sorted_edges = {}
+        for i, j in enumerate(np.argsort(onset_list)):
+            self.edges_dictionary[i] =  selected_edges_unsorted[element_list[j]]
+            sorted_edges[i] = {}
+            sorted_edges[i]['element'] = element_list[j]
+            sorted_edges[i]['Z'] = get_Z(element_list[j])
+
+            sorted_edges[i]['edge'] = symmetry_list[j]
+            sorted_edges[i]['onset'] = onset_list[j]
+        edge_list = []    
+        self.sorted_edges = sorted_edges
+        for i in range(len(onset_list)):
+            #print(sorted_edges[i])    
+            edge_list.append(sorted_edges[i]['element']+'-'+sorted_edges[i]['edge'])
+        return edge_list
+    
