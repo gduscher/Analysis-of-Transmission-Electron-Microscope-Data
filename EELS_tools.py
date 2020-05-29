@@ -2,7 +2,7 @@ import numpy as np
 
 from scipy import integrate
 from scipy.interpolate import interp1d,splev,splrep,splint
-
+from scipy import interpolate 
 from scipy.signal import find_peaks, peak_prominences
 from scipy.ndimage.filters import gaussian_filter
 
@@ -71,12 +71,18 @@ class interactive_spectrum_image(object):
         'fit_ELNES': fit core-loss edge with model peaks  !! Core loss spectra only!!
     """
     
-    def __init__(self, data_source, horizontal = True):
+    def __init__(self, dset, horizontal = True):
         
+        
+        if dset.attrs['data_type'] != 'spectrum_image':
+            return
+        
+
         box_layout = widgets.Layout(display='flex',
                     flex_flow='row',
                     align_items='stretch',
                     width='100%')
+
 
         words = ['fix_energy','fit_zero_loss','fit_low_loss','fit_composition','fit_ELNES']
         
@@ -84,15 +90,7 @@ class interactive_spectrum_image(object):
         box = widgets.Box(children=self.buttons, layout=box_layout)
         display(box)
 
-        ## MAKE Dictionary
         
-        if isinstance(data_source,dict):
-            self.tags = data_source
-        elif isinstance(data_source, h5py.Group):  
-            self.tags = self.set_tags(data_source)
-        else: 
-            print('Data source must be a dictionary or channel')
-            return
 
         #Button(description='edge_quantification')
         for button in self.buttons:
@@ -103,14 +101,16 @@ class interactive_spectrum_image(object):
         self.x = 0
         self.y = 0
         
-        self.extent = [0,self.tags['cube'].shape[1],self.tags['cube'].shape[0],0]
-        self.rectangle = [0,self.tags['cube'].shape[1],0, self.tags['cube'].shape[0]]
+        self.extent = [0,dset.shape[0],dset.shape[1],0]
+        self.rectangle = [0,dset.shape[0],0, dset.shape[1]]
         self.scaleX = 1.0
         self.scaleY = 1.0
+
+        self.zero_loss_fit_width = 0.25
+        
         self.analysis = []
         self.plot_legend = False
-        if 'ylabel' not in self.tags:
-            tags['ylabel'] = 'intensity [a.u.]'
+        
         self.SI = False
         
         if horizontal:
@@ -120,10 +120,10 @@ class interactive_spectrum_image(object):
             self.ax1=plt.subplot(2, 1, 1)
             self.ax2=plt.subplot(2, 1, 2)
             
-        self.cube = self.tags['cube']
-        self.image = self.tags['cube'].sum(axis=2)
+        self.cube = np.array(dset)
+        self.image = self.cube.sum(axis=2)
         
-        self.ax1.imshow(self.image, extent = self.extent)
+        self.ax1.imshow(self.image.T, extent = self.extent)
         if horizontal:
             self.ax1.set_xlabel('distance [pixels]')
         else:
@@ -132,14 +132,22 @@ class interactive_spectrum_image(object):
         
         self.rect = patches.Rectangle((0,0),1,1,linewidth=1,edgecolor='r',facecolor='red', alpha = 0.2)
         self.ax1.add_patch(self.rect)
-        self.intensity_scale = self.tags['spectra'][f'{self.x}-{self.y}']['intensity_scale']
-        self.spectrum = self.tags['spectra'][f'{self.x}-{self.y}']['spectrum']* self.intensity_scale
-        self.energy_scale = self.tags['spectra'][f'{self.x}-{self.y}']['energy_scale']
+
+        
+        self.energy_scale = dset.dims[2][0]
+
+        self.common_energy_scale = self.energy_scale
+        self.intensity_scale = 1/self.cube.sum(axis=2)*1e6
+        self.ylabel = 'inel. scat. int.  [ppm]'
+        if self.energy_scale[0]>0:
+            self.intensity_scale = self.intensity_scale*0+1
+            self.ylabel = 'intensity [a.u.]'
+        self.spectrum = self.cube[self.x,self.y,:]* self.intensity_scale[self.x,self.y]
         
         self.ax2.plot(self.energy_scale,self.spectrum)
         self.ax2.set_title(f' spectrum {self.x},{self.y} ')
         self.ax2.set_xlabel('energy loss [eV]')
-        self.ax2.set_ylabel(self.tags['ylabel'])
+        self.ax2.set_ylabel(self.ylabel)
         self.cid = self.figure.canvas.mpl_connect('button_press_event', self.onclick)
         
         
@@ -197,32 +205,18 @@ class interactive_spectrum_image(object):
         self.y = y          
         
     def onclick(self,event):
-        x = int(event.xdata)
-        y = int(event.ydata)
-        
-        #print(x,y)
-        if x >= self.rectangle[0] and x < self.rectangle[0]+self.rectangle[1]:
-            if y >= self.rectangle[2] and y < self.rectangle[2]+self.rectangle[3]:
-                self.x = int((x - self.rectangle[0])/ self.rectangle[1]*self.cube.shape[1])
-                self.y = int((y - self.rectangle[2])/ self.rectangle[3]*self.cube.shape[0])
-            else:
-                return
-        else:
-            return
-        
-        
         if event.inaxes in [self.ax1]:
-            x = (self.x * self.rectangle[1]/self.cube.shape[1]+ self.rectangle[0])
-            y = (self.y * self.rectangle[3]/self.cube.shape[0]+ self.rectangle[2])
+            self.x = int(event.xdata)
+            self.y = int(event.ydata)
             
-            self.rect.set_xy([x,y]) 
-            self.update()
+            self.rect.set_xy([self.x,self.y]) 
+        self.ax1.set_title(f'{self.x}')
+        self.update()
             
     def get_spectrum(self):
-        self.intensity_scale = self.tags['spectra'][f'{self.x}-{self.y}']['intensity_scale']
-        self.energy_scale = self.tags['spectra'][f'{self.x}-{self.y}']['energy_scale']
-        return   self.tags['spectra'][f'{self.x}-{self.y}']['spectrum']* self.intensity_scale
+        return   self.cube[self.x,self.y,:]*self.intensity_scale[self.x,self.y]
     def update(self):
+        self.ax1.set_title('up')
         xlim = self.ax2.get_xlim()
         ylim = self.ax2.get_ylim()
         self.ax2.clear()
@@ -250,29 +244,11 @@ class interactive_spectrum_image(object):
         self.ax2.set_xlim(xlim)
         self.ax2.set_ylim(ylim)
         self.ax2.set_xlabel('energy loss [eV]')
-        self.ax2.set_ylabel(self.tags['ylabel'])
+        self.ax2.set_ylabel(self.ylabel)
         self.ax2.set_xlim(xlim)
             
         #self.ax2.draw()
-    def set_tags(self, channel):
-        tags = ft.h5_get_dictionary(channel)
-        if tags['data_type']== 'spectrum_image':
-            tags['image'] = tags['data']
-            tags['data'] = tags['cube'][0,0,:]
-            if 'intentsity_scale_ppm' not  in channel:
-                channel['intentsity_scale_ppm'] = 1
-                
-            tags['ylabel'] = 'intensity [a.u.]'
-            tags['spectra'] = {}
-            for x in range(tags['spatial_size_y']):
-                for y in range(tags['spatial_size_x']):
-                    tags['spectra'][f'{x}-{y}'] ={}
-                    tags['spectra'][f'{x}-{y}']['spectrum'] = tags['cube'][y,x,:]
-                    tags['spectra'][f'{x}-{y}']['energy_scale'] = tags['energy_scale']
-                    tags['spectra'][f'{x}-{y}']['intensity_scale'] = 1/tags['cube'][y,x,:].sum()*1e6
-            tags['ylabel'] = 'inel. scat. int.  [ppm]'
-
-        return tags
+    
     def fix_energy(self):
         
         energy_scale = self.tags['spectra'][f'{self.x}-{self.y}']['energy_scale']
@@ -283,32 +259,24 @@ class interactive_spectrum_image(object):
         self.energy_scale = energy_scale-deltaE
         title =f'spectrum {self.x},{self.y} FWHM: {FWHM:.2f}, dE: {deltaE:.3f}'
         return title
-        
+    
+
     def fit_zero_loss(self, plot_this = True):
         
-        energy_scale = self.tags['spectra'][f'{self.x}-{self.y}']['energy_scale']
-        spectrum = self.tags['spectra'][f'{self.x}-{self.y}']['spectrum'] * self.intensity_scale
-        if 'zero_loss_fit_width' not in self.tags:
-            self.tags['zero_loss_fit_width'] = .5
-        if self.tags['zero_loss_fit_width']/(energy_scale[1]-energy_scale[0]) < 6:
-            self.tags['zero_loss_fit_width']= (energy_scale[1]-energy_scale[0]) *6
-        FWHM,deltaE = fixE( spectrum, energy_scale)
-        energy_scale = energy_scale -deltaE
-        zLoss, pZL = resolution_function(energy_scale, spectrum, self.tags['zero_loss_fit_width'])
-        FWHM2,deltaE2 = fixE( zLoss, energy_scale)
-        
-        self.tags['spectra'][f'{self.x}-{self.y}']['resolution_function'] = zLoss
-        self.tags['spectra'][f'{self.x}-{self.y}']['pZL'] = pZL
-        self.tags['spectra'][f'{self.x}-{self.y}']['deltaE'] = deltaE
-        self.tags['spectra'][f'{self.x}-{self.y}']['FWHM_resolution'] = FWHM2
-        self.tags['spectra'][f'{self.x}-{self.y}']['FWHM'] = FWHM
+        energy_scale = self.energy_scale
+        spectrum =self.get_spectrum()
+        if self.zero_loss_fit_width == 0:
+            self.zero_loss_fit_width = .5
+        if self.zero_loss_fit_width/(energy_scale[1]-energy_scale[0]) < 6:
+            self.zero_loss_fit_width = (energy_scale[1]-energy_scale[0]) *6 ##need at least 6 channels for siz parameters to fit
+        zLoss, pZL = resolution_function(energy_scale, spectrum, self.zero_loss_fit_width)
+        FWHM,deltaE = fixE( zLoss, energy_scale)
         
         if plot_this:
             self.ax2.plot(energy_scale,zLoss, label = 'resolution function', color = 'black')
             self.ax2.plot(energy_scale,self.spectrum-zLoss, label = 'difference', color = 'orange')
             self.ax2.axhline(linewidth = 0.5, color= 'black');
-        self.energy_scale = energy_scale
-        title =f'spectrum {self.x},{self.y} FWHM: {FWHM:.2f}'#', dE: {deltaE2:.5e}'
+        title =f'spectrum {self.x},{self.y} FWHM: {abs(FWHM):.2f}'#', dE: {deltaE2:.5e}'
         return title
 
     def fit_quantification(self, plot_this = True):
@@ -1219,7 +1187,7 @@ def fixE( spec, energy):
     
     x = np.array(energy[start:end])
     y = np.array(spec[start:end]).copy()
-    print(energy[start])
+    
     y[np.nonzero(y<=0)] = 1e-12
 
     def gauss(x, p): # p[0]==mean, p[1]= area p[2]==fwhm, 
@@ -1291,6 +1259,25 @@ def resolution_function(energy_scale, spectrum, width, verbose = False):
     zLoss = ZLfunc(pZL,  energy_scale)
     
     return zLoss, pZL
+
+def get_energy_shifts(spectrum_image, energy_scale, zero_loss_fit_width):
+    shifts= np.zeros(spectrum_image.shape[0:2])
+    for x in range(spectrum_image.shape[0]):
+        for y in range(spectrum_image.shape[1]):
+            spectrum = spectrum_image[x,y,:]
+            FWHM,deltaE = fixE( spectrum, energy_scale)
+            zLoss, pZL = resolution_function(energy_scale-deltaE, spectrum, zero_loss_fit_width)
+            FWHM2,deltaE2 = fixE( zLoss, energy_scale-deltaE)
+            shifts[x,y] = deltaE+deltaE2
+    return shifts
+            
+def shift_on_same_scale(spectrum_image, shift, energy_scale, master_energy_scale):
+    new_SI = np.zeros(spectrum_image.shape)
+    for x in range(spectrum_image.shape[0]):
+        for y in range(spectrum_image.shape[1]):
+            tck = interpolate.splrep(energy_scale-shift[x,y], spectrum_image[x,y,:], k = 1, s=0)
+            new_SI[x,y,:] = interpolate.splev(master_energy_scale, tck, der=0)
+    return new_SI
 
 
 def get_waveLength(E0):
