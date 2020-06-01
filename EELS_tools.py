@@ -95,6 +95,9 @@ class interactive_spectrum_image(object):
         #Button(description='edge_quantification')
         for button in self.buttons:
             button.observe(self.onButtonClicked, 'value')#on_click(self.onButtonClicked)
+        self.cube = np.array(dset)
+        
+        self.fit_parameters()
         
         self.figure = plt.figure()
         self.horizontal = horizontal
@@ -174,30 +177,33 @@ class interactive_spectrum_image(object):
             if selection in self.analysis:
                 self.analysis.remove(selection)
 
-                
+    def doAll_button(self, ev=None): ## seems to need an event variable
+        self.do_All( selection= None, verbose = True)
     def do_All(self, selection= None, verbose = True):
         x = self.x
         y = self.y 
+        done = 0
         if selection==None:
             selection = self.analysis
-        for self.x in range(self.cube.shape[1]):
+        for self.x in range(self.cube.shape[0]):
             if verbose:
-                #print(f' row: {self.x}')
-                if done < int(self.x/self.cube.shape[1]*50):
-                    done = int(self.x/nimages*50)
-                    sys.stdout.write('\r')
-                    # progress output :
-                    sys.stdout.write("[%-50s] %d%%" % ('='*done, 2*done))
-                    sys.stdout.flush()
-            for self.y in range(self.cube.shape[0]):
+                self.progress.value = int(self.x/(self.cube.shape[0]-1)*100)
+                
+            for self.y in range(self.cube.shape[1]):
                 
                 if 'fit_zero_loss' in selection:
                     title = self.fit_zero_loss(plot_this = False)
                     
+                elif 'fit_low_loss' in selection:
+                    title = self.fit_LL(plot_this = False)
+
                 elif 'fix_energy' in selection:
-                    self.ax2.set_title('bn')
-                    title = self.fix_energy()
                     
+                    title = self.fix_energy()
+
+                elif 'fit_low_loss' in selection:
+                    title = self.fit_LL(plot_this = False)
+
                 elif 'fit_composition' in selection:
                     title = self.fit_quantification(plot_this = False)
                     
@@ -210,13 +216,13 @@ class interactive_spectrum_image(object):
             self.y = int(event.ydata)
             
             self.rect.set_xy([self.x,self.y]) 
-        self.ax1.set_title(f'{self.x}')
+        #self.ax1.set_title(f'{self.x}')
         self.update()
             
     def get_spectrum(self):
         return   self.cube[self.x,self.y,:]*self.intensity_scale[self.x,self.y]
-    def update(self):
-        self.ax1.set_title('up')
+    def update(self, ev=None):
+        
         xlim = self.ax2.get_xlim()
         ylim = self.ax2.get_ylim()
         self.ax2.clear()
@@ -227,20 +233,45 @@ class interactive_spectrum_image(object):
             title = self.fit_zero_loss()
             self.ax2.set_title(title)
         elif 'fix_energy' in self.analysis:
-            self.ax2.set_title('bn')
             title = self.fix_energy()
             self.ax2.set_title(title)
+        elif 'fit_low_loss' in self.analysis:
+            self.ax2.set_title('bn')
+            title = self.fit_LL()
+            self.ax2.set_title(title)
+            self.peaks_tofit = []
+
+            cmap = plt.get_cmap("tab10")
+            for c in self.cb_container.children:
+                if c.value:
+                    peak_number = int(c.description[-1])-1
+                    self.peaks_tofit.append(peak_number)
+                    self.ax2.plot(self.energy_scale, gauss(np.array(self.energy_scale),self.pout[peak_number*3:]),linestyle='dashed',color = cmap(peak_number%10))
+                
+
 
         elif 'fit_composition' in self.analysis:
             title = self.fit_quantification()
             self.ax2.set_title(title)
+                
+            
 
         else:
             self.ax2.set_title(f' spectrum {self.x},{self.y} ')
+            self.peaks_tofit = []
+            cmap = plt.get_cmap("tab10")
+
+            for c in self.cb_container.children:
+                if c.value:
+                    peak_number = int(c.description[-1])-1
+                    self.peaks_tofit.append(peak_number)
+                    self.ax2.plot(self.energy_scale, gauss(np.array(self.energy_scale),self.pin[peak_number*3:]),linestyle='dashed', color = cmap(peak_number%10))
+                
         self.ax2.plot(self.energy_scale,self.spectrum, color= '#1f77b4', label = 'experiment')
             
         if self.plot_legend:
             self.ax2.legend(shadow=True);
+        
         self.ax2.set_xlim(xlim)
         self.ax2.set_ylim(ylim)
         self.ax2.set_xlabel('energy loss [eV]')
@@ -249,6 +280,183 @@ class interactive_spectrum_image(object):
             
         #self.ax2.draw()
     
+    def fit_LL(self, plot_this = True):
+
+        spectrum = self.get_spectrum()
+        start_fit = np.searchsorted(self.energy_scale,self.start_fit)
+        end_fit = np.searchsorted(self.energy_scale,self.end_fit)
+        
+        peaks_tofit = []
+        pin2 = []
+        for c in self.cb_container.children:
+            if not c.value:
+                pass #print(c)
+            else:
+                peak_number = int(c.description[-1])-1
+                peaks_tofit.append(peak_number)
+                pin2.extend(self.pin[int(peak_number)*3:int(peak_number)*3+3])
+        #print(peaks_tofit)
+        zero_loss, pZL = resolution_function(self.energy_scale, spectrum, self.zero_loss_fit_width)
+        
+
+        p = fit_peaks(spectrum-zero_loss, self.energy_scale, pin2, start_fit,end_fit, self.zero_loss_fit_width)
+
+        self.pout = p 
+        for i in range (int(len(p)/3)):
+            (self.peak_parameters[i])[int(self.x),int(self.y),:] = p[i*3:i*3+3]
+
+        #print(f'peak \t position \t amplitude \t width')
+        #number_of_peaks = int(len(pin2)/3)
+        #for i in range(number_of_peaks):
+        #    print(f'{i+1}   \t   {p[i*3]:.2f}    \t   {p[i*3+1]:.1f}   \t  {p[i*3+2]:.3f}')
+
+        edgeModel = model_LL(self.energy_scale,p)
+        self.model = edgeModel
+        if  plot_this:
+            self.ax2.plot(self.energy_scale,edgeModel+zero_loss, label = 'model', color='red', linewidth = 2)
+            #self.ax2.hlines(0,self.energy_scale[0],self.energy_scale[-1], color = 'gray' ,linewidth = 0.5)
+            self.ax2.plot(self.energy_scale,(spectrum-(edgeModel+zero_loss))/np.sqrt(spectrum+1e-12), label ='poison', color='orange', linewidth=0.5)
+        
+        return f' fit of spectrum {self.x},{self.y} '
+
+    def fit_parameters(self):
+
+        pin = []
+        peak_parameters = []
+        for i in range(4):
+            pin.extend([float(i), 1000., 1.])
+            peak_parameters.append(np.zeros([self.cube.shape[0],self.cube.shape[1],3]))
+        self.pin = pin
+        self.peak_parameters = peak_parameters
+        self.fitboxes = []
+        box_layout = widgets.Layout(display='flex',
+                    flex_flow='row',
+                    align_items='stretch',
+                    width='95%')
+        self.fit_container = widgets.HBox(layout =box_layout)
+
+        self.fitboxes.append(widgets.FloatText(description="start fit",
+                 layout=widgets.Layout(width='160px', height='26px')))
+        self.fitboxes.append(widgets.FloatText(description="end fit", 
+                 layout=widgets.Layout(width='160px', height='26px')))
+        self.fitALL_button = widgets.Button(description='Fit All',disabled=False,button_style='', # 'success', 'info', 'warning', 'danger' or ''
+                 layout=widgets.Layout(width='120px', height='25px', margin = '2px 0 0 15px ')) 
+        self.fitALL_button.on_click(self.doAll_button)#on_click(self.onButtonClicked)
+     
+        self.fitboxes.append(self.fitALL_button) # 'success', 'info', 'warning', 'danger' or ''
+    
+        self.progress = widgets.IntProgress(min=0, max = 99,
+                 layout=widgets.Layout(width='200px', height='25px')) # instantiate the bar
+        self.fitboxes.append(self.progress) # display the bar
+
+        self.fit_container.children=[i for i in self.fitboxes]
+    
+
+        self.peakboxes = []
+        self.peak_container = widgets.HBox(layout =box_layout)
+        self.peak_select = widgets.Dropdown(options =  ['peak 1','peak 2','peak 3', 'add peak'],
+                 layout=widgets.Layout(width='160px', height='26px'))
+        self.peakboxes.append(self.peak_select)
+        self.peakboxes.append(widgets.FloatText(description="position", value = pin[0],
+                 layout=widgets.Layout(width='160px', height='26px')))
+        self.peakboxes.append(widgets.FloatText(description="amplitude", value = pin[1],
+                 layout=widgets.Layout(width='160px', height='26px')))
+        self.peakboxes.append(widgets.FloatText(description="width", value = pin[2],
+                 layout=widgets.Layout(width='160px', height='26px')))
+
+        self.peak_container.children=[i for i in self.peakboxes]
+
+        # preparing a container to put in created checkbox per domain
+        self.checkboxes = []
+        self.cb_container = widgets.HBox(layout =box_layout)
+    
+        self.peak_select.observe(self.on_change)
+
+        for child in self.fit_container.children:
+            child.observe(self.update_values)
+        for child in self.peak_container.children:
+            child.observe(self.update_values)
+        for child in self.cb_container.children:
+            child.observe(self.update)
+
+        display(self.fit_container)
+        display(self.peak_container)
+        display(self.cb_container)
+
+
+    def on_change(self, change):
+        if change['type'] == 'change' and change['name'] == 'value':
+            #print ("changed to %s" % change['new'])
+            
+            add_peak = True        
+            for check in self.checkboxes:
+                if change['old'] == check.description:
+                    add_peak = False
+            if change['old'] == 'add peak':
+                add_peak = False
+            if add_peak:
+                self.checkboxes.append(widgets.Checkbox(description = change['old'], value=True, 
+                        layout=widgets.Layout(width='150px', height='25px', margin = '0 0 0 0')))
+                self.cb_container.children=[i for i in self.checkboxes]
+            
+            add_peak = True  
+            for check in self.checkboxes:
+                if change['new'] == check.description:
+                    add_peak = False
+            
+            if change['new'] == 'add peak':
+                #print(peak_select.options[-2][-1])
+                options = []
+                for i in range (int(self.peak_select.options[-2][-1])+1):
+                    options.append(f'peak {i+1}')
+                options.append(f'add peak')
+                self.peak_select.options = options
+                self.peak_select.value= options[-2]
+                add_peak = False
+                self.pin.extend([0., 1000., 1.])
+                self.peak_parameters.append(np.zeros([self.cube.shape[0],self.cube.shape[1],3]))
+        
+
+            
+            
+            if add_peak:
+                self.checkboxes.append(widgets.Checkbox(description = change['new'], value=True, 
+                            layout=widgets.Layout(width='150px', height='25px', margin = '0 0 0 0')))
+                self.cb_container.children=[i for i in self.checkboxes]
+                for child in self.cb_container.children:
+                    child.observe(self.update)
+
+            
+            
+            peak_number = int(self.peak_select.value[-1])-1     
+            #print(peak_number, (len(pin)))
+            self.peakboxes[1].value = self.pin[peak_number*3]   
+            self.peakboxes[2].value = self.pin[peak_number*3+1]   
+            self.peakboxes[3].value = self.pin[peak_number*3+2]    
+                
+    def update_values(self,ev):
+        if ev['type'] == 'change' and ev['name'] == 'value':
+            #print(ev['owner'].description, ev['new'])
+            if ev['owner'].description in ['position', 'amplitude', 'width']:
+                peak_number = int(self.peak_select.value[-1])-1
+                number = ['position', 'amplitude', 'width'].index(ev['owner'].description)
+                self.pin[peak_number*3+number]= ev['new']
+                if number == 0:
+                    chan =  np.searchsorted(self.energy_scale,ev['new'])
+                    if int(self.peakboxes[2].value) == 1000:
+                        self.pin[peak_number*3+1] = self.spectrum[chan]
+                        self.peakboxes[2].value = self.pin[peak_number*3+1] 
+                self.update()
+                
+            elif ev['owner'].description == 'start fit':
+                self.start_fit =  ev['new']
+                #print('start_fit', self.start_fit)
+            elif ev['owner'].description == 'end fit':
+                self.end_fit =  ev['new']
+                #print('fit_end',end_fit)
+    
+    
+
     def fix_energy(self):
         
         energy_scale = self.tags['spectra'][f'{self.x}-{self.y}']['energy_scale']
@@ -408,7 +616,36 @@ class interactive_spectrum_image(object):
                         self.rect.set_height(height/self.cube.shape[0])
         self.SI = True
         
+def residuals_LL(p,  x, y ):
+    err = (y-model_LL(x,p))/np.sqrt(np.abs(y))
+    return err        
 
+def model_LL(x, p):  
+    y = np.zeros(len(x))
+    
+    number_of_peaks = int(len(p)/3)
+    for i in range(number_of_peaks):
+        p[i*3+1] = abs(p[i*3+1])
+        p[i*3+2] = abs(p[i*3+2])
+        if p[i*3+2] > abs(p[i*3])*4.29193/2.0:
+            p[i*3+2] = abs(p[i*3])*4.29193/2.  ### width cannot extend beyound zero, maximum is FWTM/2
+    
+        y  = y +gauss(x, p[i*3:])
+
+    return y
+
+def fit_peaks(spectrum, energy_scale, pin, start_fit,end_fit, zero_loss_fit_width):
+    
+    fit_energy = energy_scale[start_fit:end_fit]
+    fit_spectrum =   spectrum[start_fit:end_fit]
+    
+    p, cov = leastsq(residuals_LL, pin,  args = (fit_energy,fit_spectrum) )
+    number_of_peaks = int(len(p)/3)
+    for i in range(number_of_peaks):
+        p[i*3+1] = abs(p[i*3+1])
+        p[i*3+2] = abs(p[i*3+2])
+
+    return p 
 
 
 #################################################################

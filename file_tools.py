@@ -362,7 +362,7 @@ def h5_open_file(filename = None, saveFile = False):
         if saveFile: 
             h5_file_name = savefile_dialog(initial_file = tags['initial_file'])
         else:
-            h5_file_name = get_h5_filename(tags['initial_file'])
+            h5_file_name = get_h5_filename(os.path.join(path,tags['initial_file']))
 
         path, file_name = os.path.split(h5_file_name)
         basename, _ = os.path.splitext(file_name)
