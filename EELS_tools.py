@@ -84,7 +84,7 @@ class interactive_spectrum_image(object):
                     width='100%')
 
 
-        words = ['fix_energy','fit_zero_loss','fit_low_loss','fit_composition','fit_ELNES']
+        words = ['fit_parameter','fit_zero_loss','fit_low_loss','fit_composition','fit_ELNES']
         
         self.buttons = [widgets.ToggleButton(value=False, description=word, disabled=False) for word in words]
         box = widgets.Box(children=self.buttons, layout=box_layout)
@@ -165,9 +165,9 @@ class interactive_spectrum_image(object):
                 else:
                     self.buttons[3].value = False
                     return
-            elif selection in  ['fix_energy', 'fit_zero_loss']:
+            elif selection in  [ 'fit_zero_loss', 'fit_low_loss']:
                 if self.energy_scale[0] > 0:
-                    button_index = ['fix_energy', 'fit_zero_loss'].index(selection)
+                    button_index = ['fix_energy', 'fit_zero_loss','fit_low_loss'].index(selection)
                     self.buttons[button_index].value = False
                     return
             self.analysis.append(selection)
@@ -229,26 +229,32 @@ class interactive_spectrum_image(object):
         
         self.spectrum = self.get_spectrum()
         
-        if 'fit_zero_loss' in self.analysis:
-            title = self.fit_zero_loss()
-            self.ax2.set_title(title)
-        elif 'fix_energy' in self.analysis:
-            title = self.fix_energy()
-            self.ax2.set_title(title)
-        elif 'fit_low_loss' in self.analysis:
+        if 'fit_parameter' in self.analysis:
+            self.row1.layout.visibility = 'visible'
+            self.row2.layout.visibility = 'visible'
+            self.row3.layout.visibility = 'visible'
+        else:
+            self.row1.layout.visibility = 'hidden'
+            self.row2.layout.visibility = 'hidden'
+            self.row3.layout.visibility = 'hidden'
+            
+        if 'fit_low_loss' in self.analysis:
             self.ax2.set_title('bn')
             title = self.fit_LL()
             self.ax2.set_title(title)
             self.peaks_tofit = []
 
             cmap = plt.get_cmap("tab10")
-            for c in self.cb_container.children:
+            for c in self.row3.children:
                 if c.value:
                     peak_number = int(c.description[-1])-1
                     self.peaks_tofit.append(peak_number)
                     self.ax2.plot(self.energy_scale, gauss(np.array(self.energy_scale),self.pout[peak_number*3:]),linestyle='dashed',color = cmap(peak_number%10))
                 
-
+        elif 'fit_zero_loss' in self.analysis:
+            
+            title = self.fit_zero_loss()
+            self.ax2.set_title(title)
 
         elif 'fit_composition' in self.analysis:
             title = self.fit_quantification()
@@ -261,7 +267,7 @@ class interactive_spectrum_image(object):
             self.peaks_tofit = []
             cmap = plt.get_cmap("tab10")
 
-            for c in self.cb_container.children:
+            for c in self.row3.children:
                 if c.value:
                     peak_number = int(c.description[-1])-1
                     self.peaks_tofit.append(peak_number)
@@ -288,7 +294,7 @@ class interactive_spectrum_image(object):
         
         peaks_tofit = []
         pin2 = []
-        for c in self.cb_container.children:
+        for c in self.row3.children:
             if not c.value:
                 pass #print(c)
             else:
@@ -296,6 +302,8 @@ class interactive_spectrum_image(object):
                 peaks_tofit.append(peak_number)
                 pin2.extend(self.pin[int(peak_number)*3:int(peak_number)*3+3])
         #print(peaks_tofit)
+
+          
         zero_loss, pZL = resolution_function(self.energy_scale, spectrum, self.zero_loss_fit_width)
         
 
@@ -319,22 +327,37 @@ class interactive_spectrum_image(object):
         
         return f' fit of spectrum {self.x},{self.y} '
 
-    def fit_parameters(self):
-
-        pin = []
-        peak_parameters = []
-        for i in range(4):
-            pin.extend([float(i), 1000., 1.])
-            peak_parameters.append(np.zeros([self.cube.shape[0],self.cube.shape[1],3]))
-        self.pin = pin
-        self.peak_parameters = peak_parameters
-        self.fitboxes = []
+    def make_rows(self):
         box_layout = widgets.Layout(display='flex',
                     flex_flow='row',
                     align_items='stretch',
-                    width='95%')
-        self.fit_container = widgets.HBox(layout =box_layout)
+                    width='95%',
+                    visibility = 'hidden')
+        self.row1 = widgets.HBox(layout =box_layout)
+        self.row2 = widgets.HBox(layout =box_layout)
+        self.row3 = widgets.HBox(layout =box_layout)
 
+
+    def fit_parameters(self, pin= [] ):
+
+        if len (pin) == 0:
+        
+            for i in range(4):
+                pin.extend([float(i), 1000., 1.])
+                
+        # make out_put
+        self.start_fit = self.energy_scale[100]
+        self.end_fit =   self.energy_scale[150]
+
+        self.make_rows()
+        peak_parameters = []
+        for i in range(int(len(pin)/3)):
+            peak_parameters.append(np.zeros([self.cube.shape[0],self.cube.shape[1],3]))
+
+        self.pin = pin
+        self.peak_parameters = peak_parameters
+        self.fitboxes = []
+        
         self.fitboxes.append(widgets.FloatText(description="start fit",
                  layout=widgets.Layout(width='160px', height='26px')))
         self.fitboxes.append(widgets.FloatText(description="end fit", 
@@ -349,11 +372,10 @@ class interactive_spectrum_image(object):
                  layout=widgets.Layout(width='200px', height='25px')) # instantiate the bar
         self.fitboxes.append(self.progress) # display the bar
 
-        self.fit_container.children=[i for i in self.fitboxes]
+        self.row1.children=[i for i in self.fitboxes]
     
 
         self.peakboxes = []
-        self.peak_container = widgets.HBox(layout =box_layout)
         self.peak_select = widgets.Dropdown(options =  ['peak 1','peak 2','peak 3', 'add peak'],
                  layout=widgets.Layout(width='160px', height='26px'))
         self.peakboxes.append(self.peak_select)
@@ -364,24 +386,23 @@ class interactive_spectrum_image(object):
         self.peakboxes.append(widgets.FloatText(description="width", value = pin[2],
                  layout=widgets.Layout(width='160px', height='26px')))
 
-        self.peak_container.children=[i for i in self.peakboxes]
+        self.row2.children=[i for i in self.peakboxes]
 
         # preparing a container to put in created checkbox per domain
         self.checkboxes = []
-        self.cb_container = widgets.HBox(layout =box_layout)
-    
+        
         self.peak_select.observe(self.on_change)
 
-        for child in self.fit_container.children:
+        for child in self.row1.children:
             child.observe(self.update_values)
-        for child in self.peak_container.children:
+        for child in self.row2.children:
             child.observe(self.update_values)
-        for child in self.cb_container.children:
+        for child in self.row3.children:
             child.observe(self.update)
 
-        display(self.fit_container)
-        display(self.peak_container)
-        display(self.cb_container)
+        display(self.row1)
+        display(self.row2)
+        display(self.row3)
 
 
     def on_change(self, change):
@@ -397,7 +418,7 @@ class interactive_spectrum_image(object):
             if add_peak:
                 self.checkboxes.append(widgets.Checkbox(description = change['old'], value=True, 
                         layout=widgets.Layout(width='150px', height='25px', margin = '0 0 0 0')))
-                self.cb_container.children=[i for i in self.checkboxes]
+                
             
             add_peak = True  
             for check in self.checkboxes:
@@ -416,17 +437,14 @@ class interactive_spectrum_image(object):
                 self.pin.extend([0., 1000., 1.])
                 self.peak_parameters.append(np.zeros([self.cube.shape[0],self.cube.shape[1],3]))
         
-
-            
-            
             if add_peak:
                 self.checkboxes.append(widgets.Checkbox(description = change['new'], value=True, 
                             layout=widgets.Layout(width='150px', height='25px', margin = '0 0 0 0')))
-                self.cb_container.children=[i for i in self.checkboxes]
-                for child in self.cb_container.children:
-                    child.observe(self.update)
+        
+            self.row3.children=[i for i in self.checkboxes]
+            for child in self.row3.children:
+                child.observe(self.update)
 
-            
             
             peak_number = int(self.peak_select.value[-1])-1     
             #print(peak_number, (len(pin)))
@@ -458,7 +476,7 @@ class interactive_spectrum_image(object):
     
 
     def fix_energy(self):
-        
+
         energy_scale = self.tags['spectra'][f'{self.x}-{self.y}']['energy_scale']
         spectrum = self.tags['spectra'][f'{self.x}-{self.y}']['spectrum'] * self.intensity_scale
         FWHM,deltaE = fixE( spectrum, energy_scale)
