@@ -96,7 +96,8 @@ class interactive_spectrum_image(object):
         for button in self.buttons:
             button.observe(self.onButtonClicked, 'value')#on_click(self.onButtonClicked)
         self.cube = np.array(dset)
-        
+        self.energy_scale = dset.dims[2][0]
+
         self.fit_parameters()
         
         self.figure = plt.figure()
